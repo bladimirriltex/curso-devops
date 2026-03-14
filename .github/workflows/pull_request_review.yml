@@ -21,9 +21,6 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Give execute permission to mvnw
-        run: chmod +x mvnw
-
       - name: Build the project
         run: ./mvnw clean compile --no-transfer-progress
 
