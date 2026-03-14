@@ -22,10 +22,10 @@ jobs:
           cache: 'maven'
 
       - name: Build the project
-        run: ./mvnw clean compile --no-transfer-progress
+        run: mvn clean compile --no-transfer-progress
 
       - name: Run tests
-        run: ./mvnw test --no-transfer-progress
+        run: mvn test --no-transfer-progress
 
       - name: Upload test results
         if: always()
