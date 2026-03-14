@@ -1,14 +1,30 @@
-# Archivos de configuración de .NET
-appsettings*.json
-
-# Archivos de compilación de .NET
-bin/
-obj/
-
-# Archivos de comiplación de Terraform
+# Archivos de compilación de Terraform
 *.tfstate
 .terraform
 *.tfstate.*
 *.tfvars
 *.out
 *.lock.hcl
+
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spring Boot
+*.log
+logs/
