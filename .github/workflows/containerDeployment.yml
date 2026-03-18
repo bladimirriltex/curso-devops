@@ -1,0 +1,36 @@
+name: Curso DevOps API CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  IMAGE_BASE_NAME: bladimirriltex/apicontactos
+
+jobs:
+  api_image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Show files in repo
+        run: ls -a
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build JAR with Maven
+        run: mvn clean package -DskipTests --no-transfer-progress
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -t $IMAGE_BASE_NAME:latest \
+            .
