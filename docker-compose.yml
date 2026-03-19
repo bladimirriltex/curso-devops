@@ -1,18 +1,74 @@
+# =============================================================================
+# DOCKER COMPOSE - Orquestación de contenedores
+#
+# Docker Compose permite definir y levantar múltiples contenedores como una
+# unidad. Aquí levantamos dos servicios que trabajan juntos:
+#   - api:   nuestra aplicación Spring Boot
+#   - nginx:  reverse proxy que recibe el tráfico HTTP del mundo exterior
+#
+# Para levantar todo: docker compose up -d
+# Para detener todo:  docker compose down
+# Para ver logs:      docker compose logs -f
+# =============================================================================
+
 services:
+
+  # ---------------------------------------------------------------------------
+  # SERVICIO: api
+  # Nuestra aplicación Spring Boot empaquetada como imagen Docker.
+  # ---------------------------------------------------------------------------
   api:
+    # La imagen que construimos y publicamos en Docker Hub desde el pipeline CI/CD.
+    # El tag :latest significa "la versión más reciente publicada".
+    # Cuando hacemos "docker compose pull", Docker descarga la nueva versión de esta imagen.
     image: bladimirriltex/apicontactos:latest
+
+    # Nombre fijo del contenedor para identificarlo fácilmente con docker ps / docker logs.
     container_name: curso-devops-api
+
+    # unless-stopped: el contenedor se reinicia automáticamente si cae (crash, OOM, etc.)
+    # o si el servidor se reinicia. Solo NO arranca si fue detenido manualmente.
+    # Esto asegura alta disponibilidad sin intervención manual.
     restart: unless-stopped
+
     ports:
+      # Formato: "PUERTO_HOST:PUERTO_CONTENEDOR"
+      # Expone la app directamente en el puerto 8080 del servidor.
+      # Útil para acceso directo: http://TU_IP:8080
       - "8080:8080"
 
+  # ---------------------------------------------------------------------------
+  # SERVICIO: nginx
+  # Reverse proxy que actúa como puerta de entrada en el puerto 80 (HTTP estándar).
+  # Recibe las peticiones y las reenvía internamente al servicio "api".
+  #
+  # ¿Por qué usamos un reverse proxy?
+  # - El usuario accede por http://TU_IP (sin poner :8080)
+  # - Nginx puede manejar múltiples servicios en el mismo servidor (en el futuro)
+  # - Añade una capa para logs, SSL (HTTPS), rate limiting, etc.
+  # ---------------------------------------------------------------------------
   nginx:
+    # nginx:alpine es la imagen oficial de Nginx basada en Alpine Linux.
+    # Alpine es una distribución minimalista (~5MB), ideal para contenedores.
     image: nginx:alpine
+
     container_name: curso-devops-nginx
+
     restart: unless-stopped
+
+    # depends_on asegura que el contenedor "api" arranque ANTES que nginx.
+    # Evita que nginx intente hacer proxy a una app que todavía no está lista.
     depends_on:
       - api
+
     ports:
+      # Puerto 80 es el puerto HTTP estándar.
+      # El usuario puede entrar con http://TU_IP sin especificar puerto.
       - "80:80"
+
     volumes:
+      # Montamos nuestro archivo de configuración de Nginx dentro del contenedor.
+      # Docker Compose busca el archivo relativo a donde está este docker-compose.yml.
+      # El sufijo ":ro" (read-only) evita que el contenedor modifique el archivo.
+      # Así Nginx usa nuestra config personalizada en lugar de la default.
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro

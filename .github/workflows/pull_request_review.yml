@@ -1,5 +1,25 @@
+# =============================================================================
+# PIPELINE DE REVISIÓN DE PULL REQUESTS - Control de Calidad
+#
+# Este workflow actúa como un "guardián" de la rama main.
+# Se ejecuta cada vez que alguien abre o actualiza un Pull Request hacia main,
+# ANTES de que el código sea mergeado.
+#
+# Su objetivo es garantizar que solo llegue a main código que:
+#   1. Compila sin errores
+#   2. Pasa todos los tests unitarios/integración
+#
+# Si algún paso falla, GitHub muestra el PR como "checks failed" y
+# (si tienes branch protection activada) bloquea el merge automáticamente.
+# Esto evita que código roto llegue a producción.
+# =============================================================================
+
 name: Run Tests on Pull Request
 
+# Se dispara SOLO en Pull Requests hacia main.
+# No corre en push directo a main (eso lo hace ci-cd.yml).
+# La distinción es importante: aquí validamos ANTES del merge,
+# el ci-cd.yml despliega DESPUÉS del merge.
 on:
   pull_request:
     branches:
@@ -10,10 +30,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
+      # Descarga el código del PR (no de main, sino la rama del PR).
+      # GitHub Actions hace un merge temporal para probar cómo quedaría el código
+      # si fuera aprobado. Así detectamos conflictos también.
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Instala Java 17 y cachea las dependencias Maven.
+      # El caché es especialmente útil aquí porque los PRs se revisan frecuentemente
+      # y no queremos descargar cientos de MB de dependencias en cada revisión.
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -21,12 +46,23 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # Compila el código fuente sin ejecutar tests.
+      # Este paso falla rápido si hay errores de sintaxis o imports incorrectos,
+      # antes de perder tiempo corriendo todos los tests.
       - name: Build the project
         run: mvn clean compile --no-transfer-progress
 
+      # Ejecuta todos los tests de JUnit definidos en src/test/.
+      # Si cualquier test falla, el pipeline marca el PR como fallido.
+      # El desarrollador debe corregir los tests antes de poder hacer merge.
       - name: Run tests
         run: mvn test --no-transfer-progress
 
+      # Sube los reportes XML generados por Maven Surefire como artefactos.
+      # "if: always()" significa que este paso corre SIN IMPORTAR si los tests pasaron
+      # o fallaron. Así siempre tienes los reportes disponibles para descargar
+      # y analizar qué tests fallaron y por qué.
+      # Los reportes se guardan 90 días por defecto en GitHub Actions.
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

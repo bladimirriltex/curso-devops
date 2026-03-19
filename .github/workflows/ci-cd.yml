@@ -1,20 +1,57 @@
+# =============================================================================
+# PIPELINE CI/CD COMPLETO - Integración y Entrega Continua
+#
+# Este es el workflow más importante del proyecto. Se ejecuta automáticamente
+# en cada push a la rama main y realiza todo el ciclo DevOps:
+#
+#   1. Valida el código corriendo los tests (CI)
+#   2. Empaqueta la app como imagen Docker y la publica (CI)
+#   3. Despliega la nueva versión en el servidor de producción (CD)
+#
+# REQUISITOS: estos Secrets deben estar configurados en el repo de GitHub:
+#   - DOCKERHUB_USERNAME : usuario de Docker Hub
+#   - DOCKERHUB_TOKEN    : access token de Docker Hub con permiso Write
+#   - SERVER_HOST        : IP pública del servidor de producción
+#   - SERVER_USER        : usuario SSH del servidor (ej: root)
+#   - SERVER_SSH_KEY     : contenido completo de la llave privada SSH (ed25519)
+#   - SERVER_SSH_PORT    : (opcional) puerto SSH del servidor, default 22
+# =============================================================================
+
 name: CI/CD - Curso DevOps API
 
+# Se dispara únicamente en push a la rama main.
+# Es decir: cuando un PR es aprobado y mergeado, o cuando se hace push directo a main.
+# No corre en otras ramas, lo que protege el entorno de producción.
 on:
   push:
     branches: ["main"]
 
+# Variables de entorno disponibles para todos los jobs del workflow.
 env:
+  # Nombre completo de la imagen en Docker Hub: usuario/repositorio
   IMAGE_NAME: bladimirriltex/apicontactos
+  # Puerto SSH del servidor. Usa el secret si está definido, si no usa 22 por defecto.
+  # Definirlo aquí evita repetir la misma expresión en cada paso que use SSH.
   SSH_PORT: ${{ secrets.SERVER_SSH_PORT || '22' }}
 
+# =============================================================================
+# JOB 1: build_test_push — Integración Continua (CI)
+# Compila, valida y publica la imagen Docker.
+# Si este job falla (tests fallan, build falla, etc.), el job de deploy NO corre.
+# =============================================================================
 jobs:
   build_test_push:
     runs-on: ubuntu-latest
     steps:
+      # Descarga el código del repositorio en la VM de GitHub Actions.
+      # Sin este paso, los demás pasos no tienen acceso al código fuente.
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Instala Java 17 en la VM del runner.
+      # "cache: maven" guarda el directorio .m2/repository entre ejecuciones.
+      # Así las dependencias de Spring Boot no se re-descargan en cada pipeline,
+      # reduciendo el tiempo de ejecución de minutos a segundos.
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -22,31 +59,65 @@ jobs:
           distribution: "temurin"
           cache: "maven"
 
+      # Ejecuta todos los tests de JUnit.
+      # Si algún test falla, el pipeline se detiene aquí y no llega a producción.
+      # Es la barrera de calidad: solo código que pasa los tests avanza.
       - name: Run tests
         run: mvn test --no-transfer-progress
 
+      # Construye la imagen Docker usando el Dockerfile del proyecto.
+      # El "." al final indica que el contexto de build es la raíz del repo.
+      # Esta imagen contiene nuestra app Spring Boot lista para ejecutarse.
       - name: Build Docker image
         run: |
           docker build -t $IMAGE_NAME:latest .
 
+      # Se autentica en Docker Hub usando los secrets del repositorio.
+      # Esto debe hacerse ANTES del push, de lo contrario Docker rechaza la subida.
+      # Usamos secrets (no variables) para que el token nunca quede expuesto en los logs.
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Sube la imagen al registry de Docker Hub con el tag "latest".
+      # A partir de aquí la imagen está disponible públicamente para que
+      # cualquier servidor pueda descargarla con "docker pull".
       - name: Push image
         run: |
           docker push $IMAGE_NAME:latest
 
+# =============================================================================
+# JOB 2: deploy — Entrega Continua (CD)
+# Conecta al servidor por SSH y despliega la nueva versión.
+# Solo corre si el job "build_test_push" terminó correctamente.
+# =============================================================================
   deploy:
     runs-on: ubuntu-latest
+    # "needs" establece la dependencia: este job espera que el anterior termine con éxito.
+    # Si los tests fallan o el push a Docker Hub falla, este job se cancela automáticamente.
     needs: build_test_push
 
     steps:
+      # Necesitamos el código del repo para copiar docker-compose.yml y nginx/default.conf
+      # al servidor en los pasos siguientes.
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Configura la llave SSH para poder conectarnos al servidor sin password.
+      # Se usa "env" para exponer el secret como variable de entorno $SSH_KEY.
+      # Esto es más seguro que inyectarlo directamente en el comando (evita que
+      # el valor aparezca en los logs de GitHub Actions).
+      #
+      # "printf '%s\n'" en lugar de "echo" para escribir la llave:
+      # "echo" puede alterar saltos de línea en llaves multilinea, corrompiendo
+      # el formato PEM y causando el error "Load key: invalid format".
+      # "printf" preserva el contenido exacto del secret.
+      #
+      # "ssh-keyscan" obtiene el fingerprint del servidor y lo guarda en known_hosts.
+      # Sin esto, SSH preguntaría interactivamente "¿confías en este host?" y el
+      # pipeline se colgaría esperando una respuesta que nunca llega.
       - name: Setup SSH key
         env:
           SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
@@ -57,12 +128,19 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p ${{ env.SSH_PORT }} ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
+      # Crea la estructura de directorios en el servidor ANTES de copiar archivos.
+      # Si la carpeta no existe y hacemos scp, el comando falla con "No such file".
+      # Este paso garantiza que el directorio siempre exista.
       - name: Create remote directories
         run: |
           ssh -p ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "mkdir -p /opt/curso-devops-api/deploy/nginx"
 
+      # Copia los archivos de despliegue al servidor usando scp (Secure Copy).
+      # Copiamos docker-compose.yml y la config de Nginx para que el servidor
+      # siempre tenga la versión más actualizada del repo.
+      # Así cualquier cambio en estos archivos también se despliega automáticamente.
       - name: Copy deployment files to server
         run: |
           scp -P ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \
@@ -73,6 +151,15 @@ jobs:
             deploy/nginx/default.conf \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/curso-devops-api/deploy/nginx/default.conf
 
+      # Ejecuta el despliegue real en el servidor mediante SSH.
+      # Los comandos se encadenan con "&&" para que si uno falla, los siguientes no corran.
+      #
+      # docker login:              se autentica para poder bajar la imagen privada/actualizada
+      # docker compose pull:       descarga la versión más reciente de la imagen desde Docker Hub
+      # docker compose up -d:      levanta (o reinicia) los contenedores en segundo plano
+      #   --remove-orphans:        elimina contenedores de servicios que ya no están en el compose
+      # docker image prune -f:     borra imágenes antiguas que ya no usa ningún contenedor,
+      #                            evitando que el disco del servidor se llene con el tiempo
       - name: Deploy on server (pull + up)
         run: |
           ssh -p ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \

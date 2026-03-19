@@ -1,9 +1,34 @@
+# =============================================================================
+# PIPELINE MANUAL - Solo Build y Push de imagen Docker
+#
+# Este workflow es una versión simplificada del ci-cd.yml.
+# A diferencia del ci-cd.yml, este:
+#   - NO corre los tests
+#   - NO despliega al servidor
+#   - Solo construye la imagen y la sube a Docker Hub
+#
+# ¿Cuándo usarlo?
+# Por ejemplo, si quieres publicar una imagen rápidamente sin pasar
+# por el ciclo completo de CI/CD (útil para imágenes de prueba o hotfixes
+# puntuales donde ya verificaste el código manualmente).
+#
+# IMPORTANTE: Este workflow fue cambiado a "workflow_dispatch" para que NO
+# corra automáticamente en cada push a main. Eso evita duplicar el trabajo
+# que ya hace ci-cd.yml. Para ejecutarlo, ve a:
+#   GitHub → Actions → "DevOps API CI/CD" → Run workflow
+# =============================================================================
+
 name: DevOps API CI/CD
 
+# workflow_dispatch significa ejecución MANUAL desde la UI de GitHub Actions.
+# No se dispara automáticamente por ningún evento del repositorio.
+# Esto lo hace seguro para usarlo como herramienta puntual sin interferir
+# con el pipeline principal (ci-cd.yml).
 on:
   workflow_dispatch:
 
 env:
+  # Nombre completo de la imagen en Docker Hub: usuario/repositorio
   IMAGE_BASE_NAME: bladimirriltex/apicontactos
 
 jobs:
@@ -11,9 +36,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Descarga el código del repositorio en la VM del runner.
       - name: Check out the repo
         uses: actions/checkout@v4
 
+      # Instala Java 17 con caché de dependencias Maven.
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -21,9 +48,17 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # Compila y empaqueta el JAR.
+      # -DskipTests omite los tests intencionalmente en este workflow,
+      # ya que el propósito aquí es solo construir rápido, no validar calidad.
+      # La validación de calidad la hace pull_request_review.yml y ci-cd.yml.
       - name: Build JAR with Maven
         run: mvn clean package -DskipTests --no-transfer-progress
 
+      # Construye la imagen Docker usando el Dockerfile del proyecto.
+      # --platform linux/amd64 asegura que la imagen sea compatible con
+      # servidores Linux de 64 bits (la arquitectura más común en producción),
+      # incluso si estás construyendo desde un Mac con chip Apple Silicon (ARM).
       - name: Build Docker image
         run: |
           docker build \
@@ -31,12 +66,18 @@ jobs:
             -t $IMAGE_BASE_NAME:latest \
             .
 
+      # Se autentica en Docker Hub antes de hacer el push.
+      # docker/login-action@v3 es la versión actual recomendada por Docker
+      # (no confundir con las actions/* de GitHub que usan @v4).
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Sube la imagen a Docker Hub con el tag "latest".
+      # Después de este paso, la imagen está disponible para cualquier servidor
+      # que haga "docker pull bladimirriltex/apicontactos:latest".
       - name: Push image to Docker Hub
         run: |
           docker push $IMAGE_BASE_NAME:latest
