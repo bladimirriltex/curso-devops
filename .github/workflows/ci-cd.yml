@@ -6,6 +6,7 @@ on:
 
 env:
   IMAGE_NAME: bladimirriltex/apicontactos
+  SSH_PORT: ${{ secrets.SERVER_SSH_PORT || '22' }}
 
 jobs:
   build_test_push:
@@ -43,36 +44,41 @@ jobs:
     needs: build_test_push
 
     steps:
-      - name: Checkout (to get docker-compose.yml and nginx config)
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup SSH key
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p ${{ secrets.SERVER_SSH_PORT || 22 }} ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -p ${{ env.SSH_PORT }} ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Copy deployment files to server
+      - name: Create remote directories
         run: |
-          scp -P ${{ secrets.SERVER_SSH_PORT || 22 }} -i ~/.ssh/id_ed25519 \
-            docker-compose.yml \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/curso-devops-api/docker-compose.yml
-
-          ssh -p ${{ secrets.SERVER_SSH_PORT || 22 }} -i ~/.ssh/id_ed25519 \
+          ssh -p ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "mkdir -p /opt/curso-devops-api/deploy/nginx"
 
-          scp -P ${{ secrets.SERVER_SSH_PORT || 22 }} -i ~/.ssh/id_ed25519 \
+      - name: Copy deployment files to server
+        run: |
+          scp -P ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \
+            docker-compose.yml \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/curso-devops-api/docker-compose.yml
+
+          scp -P ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \
             deploy/nginx/default.conf \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/curso-devops-api/deploy/nginx/default.conf
 
       - name: Deploy on server (pull + up)
         run: |
-          ssh -p ${{ secrets.SERVER_SSH_PORT || 22 }} -i ~/.ssh/id_ed25519 \
+          ssh -p ${{ env.SSH_PORT }} -i ~/.ssh/id_ed25519 \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "cd /opt/curso-devops-api && \
              docker login -u '${{ secrets.DOCKERHUB_USERNAME }}' -p '${{ secrets.DOCKERHUB_TOKEN }}' && \
              docker compose pull && \
-             docker compose up -d --remove-orphans"
+             docker compose up -d --remove-orphans && \
+             docker image prune -f"

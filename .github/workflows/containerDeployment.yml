@@ -1,8 +1,7 @@
 name: DevOps API CI/CD
 
 on:
-  push:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 env:
   IMAGE_BASE_NAME: bladimirriltex/apicontactos
